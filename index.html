@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>學生紀錄隨手記 - 伯爵紅茶</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+
+    :root {
+      --color-navy: #021d6b;
+      --color-root: #a08d82;
+      --color-pumpkin: #fe8a24;
+      --bg-cream: #fcf9f6;
+    }
+
+    body {
+      background-color: var(--bg-cream);
+      color: var(--color-navy);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    .border-root { border-color: rgba(160, 141, 130, 0.35); }
+    .text-navy { color: #021d6b; }
+    .text-root { color: #7d6b61; }
+    .bg-pumpkin { background-color: #fe8a24; }
+    .bg-pumpkin:hover { background-color: #eb7a17; }
+    .bg-navy { background-color: #021d6b; }
+
+    #toast {
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
+      transform: translate(-50%, -120%);
+    }
+    #toast.show {
+      transform: translate(-50%, 0);
+      opacity: 1;
+    }
+
+    .editing-shake {
+      animation: shake 0.25s infinite ease-in-out alternate;
+    }
+    @keyframes shake {
+      from { transform: rotate(-0.8deg); }
+      to { transform: rotate(0.8deg); }
+    }
+  </style>
+</head>
+<body class="pb-16 selection:bg-amber-100">
+
+  <!-- 頂部浮動通知 -->
+  <div id="toast" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2.5 text-sm font-bold opacity-0 pointer-events-none w-11/12 max-w-sm border">
+    <span id="toast-icon" class="text-base"></span>
+    <span id="toast-msg"></span>
+  </div>
+
+  <div class="max-w-md mx-auto p-4 space-y-4">
+    
+    <!-- 頂部標題區 & 試算表綁定按鈕（狀態指示） -->
+    <header class="bg-white p-4 rounded-2xl shadow-sm border border-root flex justify-between items-center">
+      <div>
+        <h1 class="text-lg font-black tracking-wide text-navy flex items-center gap-1.5">
+          <span>📋 學生紀錄隨手記</span>
+        </h1>
+        <p class="text-xs text-root font-medium mt-0.5">跨班通用 · 個人雲端試算表</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button type="button" id="open-modal-btn" onclick="openWebhookModal()" class="text-xs px-2.5 py-1.5 rounded-xl font-bold flex items-center gap-1 transition-all active:scale-95">
+          <!-- JS 動態賦予未綁定/已綁定狀態 -->
+        </button>
+        <input type="text" id="recorderName" placeholder="紀錄者(選填)" class="text-xs w-20 px-2 py-1.5 bg-[#fcf9f6] border border-root rounded-lg text-center font-bold text-navy focus:outline-none focus:border-navy">
+      </div>
+    </header>
+
+    <!-- 綁定試算表 Modal 彈窗 (純淨防呆版) -->
+    <div id="webhook-modal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+      <div class="bg-white w-full max-w-sm rounded-2xl p-5 shadow-2xl border border-root space-y-3.5">
+        <div class="flex justify-between items-center">
+          <h3 class="text-sm font-black text-navy flex items-center gap-1.5">
+            <span>🔗 綁定個人 Google 試算表</span>
+          </h3>
+          <button type="button" onclick="closeWebhookModal()" class="text-root hover:text-navy text-lg font-black p-1">✕</button>
+        </div>
+        <p class="text-xs text-root leading-relaxed">
+          貼上您個人 Google 試算表 Apps Script 部署發布的網頁應用程式網址 (結尾為 <code>/exec</code>)。網址僅儲存於您手機本機，紀錄僅寫入您的私人試算表！
+        </p>
+        <div>
+          <label class="text-[11px] font-bold text-navy block mb-1">您的 GAS Web 應用程式網址：</label>
+          <input type="url" id="custom-gas-url" placeholder="https://script.google.com/macros/s/.../exec" class="w-full text-xs p-2.5 bg-[#fcf9f6] border border-root rounded-xl text-navy focus:outline-none focus:border-navy font-mono">
+        </div>
+        <div class="flex gap-2 pt-1">
+          <button type="button" onclick="saveWebhookUrl()" class="flex-1 py-2.5 bg-pumpkin text-white rounded-xl text-xs font-black shadow-xs active:scale-95 transition-transform">儲存綁定</button>
+          <button type="button" onclick="closeWebhookModal()" class="px-4 py-2.5 border border-root text-root rounded-xl text-xs font-bold hover:bg-slate-50">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 步驟一：班級與座號（自由增刪整理） -->
+    <section class="bg-white p-4 rounded-2xl shadow-sm border border-root space-y-3">
+      <div>
+        <div class="flex justify-between items-center mb-1.5">
+          <div class="flex items-center gap-1.5">
+            <label class="text-xs font-bold text-root">選擇班級：</label>
+            <span id="selected-class-badge" class="text-xs font-black text-navy bg-amber-100 px-2 py-0.5 rounded-md">無班級</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button type="button" id="manage-class-btn" onclick="toggleEditClassMode()" class="text-xs font-bold text-navy hover:text-[#fe8a24] flex items-center gap-0.5 transition-colors">
+              <span id="manage-icon">⚙️</span> <span id="manage-text">整理班級</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="class-container" class="flex gap-1.5 overflow-x-auto pb-1 text-xs items-center min-h-[38px]">
+          <!-- JS 動態生成 -->
+        </div>
+
+        <div id="class-edit-toolbar" class="hidden mt-2 p-2 bg-[#fcf9f6] border border-dashed border-root rounded-xl flex justify-between items-center text-xs">
+          <button type="button" onclick="promptAddClass()" class="font-bold text-[#fe8a24] hover:text-[#eb7a17]">＋新增班級</button>
+          <button type="button" onclick="resetDefaultClasses()" class="text-root hover:text-navy">恢復預設</button>
+          <button type="button" onclick="toggleEditClassMode()" class="bg-navy text-white px-2.5 py-1 rounded-lg font-bold">完成</button>
+        </div>
+      </div>
+
+      <hr class="border-root/30">
+
+      <div>
+        <div class="flex justify-between items-center mb-2">
+          <label class="text-sm font-bold text-navy flex items-center gap-1.5">
+            <span>選擇座號</span>
+            <span id="selected-label" class="bg-pumpkin text-white text-xs px-2 py-0.5 rounded-md font-bold">未選擇</span>
+          </label>
+          <div class="flex gap-2 text-xs">
+            <button type="button" onclick="promptAddSeat()" class="font-bold text-[#fe8a24] hover:text-[#eb7a17]">＋新增座號</button>
+            <span class="text-root/40">|</span>
+            <button type="button" onclick="resetSeat()" class="text-root hover:text-navy transition-colors">清除選取</button>
+          </div>
+        </div>
+        <div id="seat-grid" class="grid grid-cols-7 gap-1.5 max-h-40 overflow-y-auto p-1.5 bg-[#fcf9f6] rounded-xl border border-root">
+          <!-- JS 動態生成 -->
+        </div>
+      </div>
+    </section>
+
+    <!-- 步驟二：類別與對象 -->
+    <section class="bg-white p-4 rounded-2xl shadow-sm border border-root space-y-3">
+      <label class="text-sm font-bold text-navy block">2. 紀錄類別</label>
+      <div class="grid grid-cols-3 gap-2" id="category-group">
+        <button type="button" onclick="selectCategory('🌟 正向表揚', this)" class="cat-btn py-2 text-xs font-bold rounded-xl border border-amber-300 bg-amber-50 text-amber-900">🌟 正向表揚</button>
+        <button type="button" onclick="selectCategory('課堂表現', this)" class="cat-btn py-2 text-xs font-bold rounded-xl border-2 border-navy bg-navy text-white shadow-sm">課堂表現</button>
+        <button type="button" onclick="selectCategory('個別輔導', this)" class="cat-btn py-2 text-xs font-bold rounded-xl border border-root bg-[#fcf9f6] text-navy">個別輔導</button>
+        <button type="button" onclick="selectCategory('常規/衝突', this)" class="cat-btn py-2 text-xs font-bold rounded-xl border border-root bg-[#fcf9f6] text-navy">常規/衝突</button>
+        <button type="button" onclick="selectCategory('親師電訪', this)" class="cat-btn py-2 text-xs font-bold rounded-xl border border-root bg-[#fcf9f6] text-navy">親師電訪</button>
+        <button type="button" onclick="selectCategory('其他事項', this)" class="cat-btn py-2 text-xs font-bold rounded-xl border border-root bg-[#fcf9f6] text-navy">其他事項</button>
+      </div>
+
+      <div class="pt-1">
+        <label class="text-xs font-bold text-root mb-1 block">聯繫對象 / 晤談方式</label>
+        <input type="text" id="contactTarget" placeholder="例：學生本人、導師、生教組長、媽媽" value="學生本人" class="w-full text-sm font-medium px-3.5 py-2.5 bg-[#fcf9f6] border border-root rounded-xl text-navy focus:outline-none focus:border-navy focus:bg-white transition-all">
+      </div>
+    </section>
+
+    <!-- 步驟三：事由摘要、語音與正向快捷標籤 -->
+    <section class="bg-white p-4 rounded-2xl shadow-sm border border-root space-y-3">
+      <div class="flex justify-between items-center">
+        <label class="text-sm font-bold text-navy">3. 事由與歷程摘要</label>
+        <button type="button" id="voice-btn" onclick="toggleSpeechRecognition()" class="flex items-center gap-1.5 text-xs bg-amber-50 text-[#b45309] border border-amber-300 px-3 py-1.5 rounded-full font-bold active:scale-95 transition-transform">
+          <span id="mic-icon">🎙️</span> <span id="mic-text">語音聽寫</span>
+        </button>
+      </div>
+
+      <div>
+        <div class="flex justify-between items-center mb-1.5">
+          <span class="text-[11px] font-bold text-root">快捷詞帶入（點擊插入摘要）：</span>
+          <button type="button" onclick="promptAddSnippet()" class="text-[11px] font-bold text-[#fe8a24] hover:text-[#eb7a17] flex items-center gap-0.5">
+            <span>＋ 新增快捷詞</span>
+          </button>
+        </div>
+        <div id="snippet-container" class="flex flex-wrap gap-1.5 min-h-[30px]">
+          <!-- JS 動態生成 -->
+        </div>
+      </div>
+
+      <textarea id="details" rows="4" oninput="checkSensitiveWords(this.value)" placeholder="點選上方快捷標籤、打字，或使用手機鍵盤語音聽寫..." class="w-full text-sm font-medium p-3.5 bg-[#fcf9f6] border border-root rounded-xl text-navy focus:outline-none focus:border-navy focus:bg-white leading-relaxed transition-all"></textarea>
+
+      <!-- 法定通報敏感詞警示列 -->
+      <div id="sensitive-alert" class="hidden bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-800 space-y-1">
+        <div class="font-black flex items-center gap-1 text-rose-700">
+          <span>⚠️ 系統通報提醒：偵測到校園敏感通報關鍵字</span>
+        </div>
+        <p class="leading-relaxed">本事件可能涉及法定通報範疇（性平/自傷/霸凌），請確認已依校規啟動正式通報程序，切勿僅以此筆記代為處理。</p>
+      </div>
+
+      <div>
+        <label class="text-xs font-bold text-root mb-1 block">後續處置 / 肯定激勵 / 追蹤事項</label>
+        <input type="text" id="actionPlan" placeholder="例：當面給予肯定口頭嘉勉、持續觀察、知會該班導師" class="w-full text-sm font-medium px-3.5 py-2.5 bg-[#fcf9f6] border border-root rounded-xl text-navy focus:outline-none focus:border-navy focus:bg-white transition-all">
+      </div>
+    </section>
+
+    <!-- 核心行動按鈕 -->
+    <button type="button" id="submit-btn" onclick="submitRecord()" class="w-full py-4 bg-pumpkin active:scale-[0.99] text-white rounded-2xl font-black text-base shadow-lg shadow-orange-200 flex justify-center items-center gap-2 transition-transform">
+      <span>🚀 同步送至試算表</span>
+    </button>
+    
+    <footer class="text-center text-xs text-root pt-2 font-medium">
+      本工具由 伯爵紅茶 製作 · 專屬課室管理
+    </footer>
+
+  </div>
+
+  <script>
+    // ==========================================
+    // 試算表綁定安全模組 (完全移除任何全域預設網址)
+    // ==========================================
+    function getActiveWebhookUrl() {
+      return localStorage.getItem('teacher_custom_gas_url') || "";
+    }
+
+    function updateBindingButtonState() {
+      const btn = document.getElementById('open-modal-btn');
+      const url = getActiveWebhookUrl();
+      if (url) {
+        btn.innerHTML = '<span>✅ 試算表已綁定</span>';
+        btn.className = "text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-300 px-2.5 py-1.5 rounded-xl font-bold flex items-center gap-1 transition-colors active:scale-95";
+      } else {
+        btn.innerHTML = '<span>⚠️ 未綁定試算表</span>';
+        btn.className = "text-xs bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-300 px-2.5 py-1.5 rounded-xl font-bold flex items-center gap-1 transition-colors active:scale-95 animate-pulse";
+      }
+    }
+
+    function openWebhookModal() {
+      const modal = document.getElementById('webhook-modal');
+      const input = document.getElementById('custom-gas-url');
+      input.value = getActiveWebhookUrl();
+      modal.classList.remove('hidden');
+    }
+
+    function closeWebhookModal() {
+      document.getElementById('webhook-modal').classList.add('hidden');
+    }
+
+    function saveWebhookUrl() {
+      const input = document.getElementById('custom-gas-url').value.trim();
+      if (!input) {
+        showToast('請輸入有效的 Apps Script 網址！', 'error');
+        return;
+      }
+      if (!input.startsWith('https://script.google.com/macros/s/')) {
+        showToast('網址需為 script.google.com 部署網址 (包含 /exec)', 'error');
+        return;
+      }
+      localStorage.setItem('teacher_custom_gas_url', input);
+      closeWebhookModal();
+      updateBindingButtonState();
+      showToast('✅ 已成功綁定您的私人試算表！', 'success');
+    }
+
+    let selectedClass = "";
+    let isClassEditing = false;
+    let selectedSeat = null;
+    let selectedCategory = "課堂表現";
+    let isRecording = false;
+    let recognition = null;
+
+    const SENSITIVE_KEYWORDS = [
+      "性平", "性騷", "性侵", "性霸凌", "自傷", "自殺", "割腕", "跳樓",
+      "霸凌", "恐嚇取財", "驗尿", "電子煙", "毒品", "外流", "私密照"
+    ];
+
+    // 1. 班級管理
+    const INITIAL_DEFAULT_CLASSES = ["701", "702", "703", "704", "705", "801", "802"];
+
+    function loadClasses() {
+      const saved = localStorage.getItem('teacher_classes_list_v8');
+      if (!saved) return INITIAL_DEFAULT_CLASSES;
+      try { return JSON.parse(saved); } catch (e) { return INITIAL_DEFAULT_CLASSES; }
+    }
+
+    function saveClasses(classes) {
+      localStorage.setItem('teacher_classes_list_v8', JSON.stringify(classes));
+      renderClasses();
+    }
+
+    function toggleEditClassMode() {
+      isClassEditing = !isClassEditing;
+      const toolbar = document.getElementById('class-edit-toolbar');
+      const manageIcon = document.getElementById('manage-icon');
+      const manageText = document.getElementById('manage-text');
+
+      if (isClassEditing) {
+        toolbar.classList.remove('hidden');
+        manageIcon.textContent = '✕';
+        manageText.textContent = '關閉整理';
+      } else {
+        toolbar.classList.add('hidden');
+        manageIcon.textContent = '⚙️';
+        manageText.textContent = '整理班級';
+      }
+      renderClasses();
+    }
+
+    function renderClasses() {
+      const container = document.getElementById('class-container');
+      container.innerHTML = '';
+      const list = loadClasses();
+
+      if (list.length === 0) {
+        container.innerHTML = '<span class="text-root text-xs py-1.5 italic">無班級，請點右上方「⚙️ 整理班級」新增！</span>';
+        selectedClass = "";
+        document.getElementById('selected-class-badge').textContent = '未設定';
+        return;
+      }
+
+      if (!selectedClass || !list.includes(selectedClass)) {
+        selectedClass = list[0];
+      }
+      document.getElementById('selected-class-badge').textContent = selectedClass + ' 班';
+
+      list.forEach((cls) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'relative inline-flex items-center rounded-lg border border-root bg-white shadow-xs flex-shrink-0 transition-transform ' + (isClassEditing ? 'editing-shake' : '');
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = cls;
+        btn.className = 'class-btn px-3 py-1.5 font-bold transition-all ' + (cls === selectedClass && !isClassEditing ? 'bg-navy text-white rounded-lg' : 'text-navy hover:bg-slate-50');
+        btn.onclick = () => {
+          if (!isClassEditing) selectClass(cls);
+        };
+        wrap.appendChild(btn);
+
+        if (isClassEditing) {
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.textContent = '×';
+          delBtn.className = 'px-1.5 py-1 text-xs font-black text-rose-600 hover:bg-rose-50 border-l border-root/40';
+          delBtn.title = '刪除 ' + cls + ' 班';
+          delBtn.onclick = (e) => {
+            e.stopPropagation();
+            deleteClass(cls);
+          };
+          wrap.appendChild(delBtn);
+        }
+
+        container.appendChild(wrap);
+      });
+    }
+
+    function selectClass(cls) {
+      selectedClass = cls;
+      document.getElementById('selected-class-badge').textContent = cls + ' 班';
+      renderClasses();
+    }
+
+    function promptAddClass() {
+      const input = prompt("請輸入欲新增的班級名稱/代號：\\n（例：803、902、資源班、管樂社）");
+      if (!input || !input.trim()) return;
+      const trimmed = input.trim();
+      const current = loadClasses();
+      if (!current.includes(trimmed)) {
+        current.push(trimmed);
+        saveClasses(current);
+        selectClass(trimmed);
+        showToast('已新增「' + trimmed + '」', 'success');
+      } else {
+        selectClass(trimmed);
+      }
+    }
+
+    function deleteClass(cls) {
+      const current = loadClasses().filter(c => c !== cls);
+      saveClasses(current);
+      showToast('已刪除「' + cls + '」班', 'info');
+    }
+
+    function resetDefaultClasses() {
+      if (confirm("確定要恢復預設的班級清單嗎？")) {
+        saveClasses(INITIAL_DEFAULT_CLASSES);
+        selectClass(INITIAL_DEFAULT_CLASSES[0]);
+        showToast('已恢復預設班級清單', 'info');
+      }
+    }
+
+    // 2. 座號管理
+    function loadMaxSeat() {
+      return parseInt(localStorage.getItem('teacher_max_seat_v8') || '35', 10);
+    }
+
+    function renderSeats() {
+      const grid = document.getElementById('seat-grid');
+      grid.innerHTML = '';
+      const max = loadMaxSeat();
+
+      for (let i = 1; i <= max; i++) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = i < 10 ? '0' + i : i;
+        btn.className = 'seat-btn py-2 text-xs font-black rounded-lg border border-root transition-all shadow-xs ' + (selectedSeat === i ? 'bg-navy text-white border-navy' : 'bg-white text-navy hover:border-[#fe8a24]');
+        btn.onclick = () => selectSeat(i, btn);
+        grid.appendChild(btn);
+      }
+    }
+
+    function promptAddSeat() {
+      const currentMax = loadMaxSeat();
+      const input = prompt("目前最大座號為 " + currentMax + " 號。\\n請輸入想要擴充至幾號？", currentMax + 5);
+      if (!input) return;
+      const num = parseInt(input.trim(), 10);
+      if (isNaN(num) || num <= currentMax) {
+        showToast('請輸入大於當前座號的數字！', 'error');
+        return;
+      }
+      localStorage.setItem('teacher_max_seat_v8', num.toString());
+      renderSeats();
+      showToast('座號已擴充至 ' + num + ' 號！', 'success');
+    }
+
+    function selectSeat(num, btn) {
+      selectedSeat = num;
+      const label = document.getElementById('selected-label');
+      label.textContent = num + ' 號';
+      label.className = 'bg-[#fe8a24] text-white text-xs px-2.5 py-0.5 rounded-md font-black shadow-xs';
+      renderSeats();
+    }
+
+    function resetSeat() {
+      selectedSeat = null;
+      const label = document.getElementById('selected-label');
+      label.textContent = '未選擇';
+      label.className = 'bg-slate-200 text-root text-xs px-2 py-0.5 rounded-md font-bold';
+      renderSeats();
+    }
+
+    // 3. 類別與快捷詞
+    function selectCategory(cat, btn) {
+      selectedCategory = cat;
+      document.querySelectorAll('.cat-btn').forEach(b => {
+        b.className = 'cat-btn py-2 text-xs font-bold rounded-xl border border-root bg-[#fcf9f6] text-navy';
+      });
+      btn.className = 'cat-btn py-2 text-xs font-bold rounded-xl border-2 border-navy bg-navy text-white shadow-sm';
+    }
+
+    const DEFAULT_SNIPPETS = [
+      { text: "主動協助同學，", isCustom: false, isPositive: true },
+      { text: "課堂發言踴躍，", isCustom: false, isPositive: true },
+      { text: "作業進步顯著，", isCustom: false, isPositive: true },
+      { text: "熱心班級服務，", isCustom: false, isPositive: true },
+      { text: "態度良好有禮，", isCustom: false, isPositive: true },
+      { text: "情緒不穩定，", isCustom: false, isPositive: false },
+      { text: "未交作業，", isCustom: false, isPositive: false },
+      { text: "課堂聊天分心，", isCustom: false, isPositive: false },
+      { text: "請該班導師協處，", isCustom: false, isPositive: false },
+      { text: "已給予定時複查。", isCustom: false, isPositive: false }
+    ];
+
+    function loadSnippets() {
+      const saved = localStorage.getItem('teacher_record_snippets_v8');
+      if (!saved) return DEFAULT_SNIPPETS;
+      try { return JSON.parse(saved); } catch (e) { return DEFAULT_SNIPPETS; }
+    }
+
+    function saveSnippets(snippets) {
+      localStorage.setItem('teacher_record_snippets_v8', JSON.stringify(snippets));
+      renderSnippets();
+    }
+
+    function renderSnippets() {
+      const container = document.getElementById('snippet-container');
+      container.innerHTML = '';
+      const list = loadSnippets();
+
+      list.forEach((item, index) => {
+        const wrap = document.createElement('div');
+        const borderClass = item.isPositive ? 'border-amber-300 bg-amber-50/70 hover:border-amber-500' : 'border-root bg-white hover:border-[#fe8a24]';
+        wrap.className = 'inline-flex items-center border rounded-lg shadow-xs overflow-hidden transition-all ' + borderClass;
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        const prefix = item.isPositive ? '✨ ' : '+ ';
+        btn.textContent = prefix + item.text.replace(/[，。]/g, '');
+        btn.className = 'text-xs font-bold px-2.5 py-1 ' + (item.isPositive ? 'text-amber-900 hover:bg-amber-100' : 'text-navy hover:bg-slate-100');
+        btn.onclick = () => appendSnippet(item.text);
+        wrap.appendChild(btn);
+
+        if (item.isCustom) {
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.textContent = '×';
+          delBtn.className = 'text-xs text-root hover:text-rose-600 px-1.5 py-1 border-l border-root/40 hover:bg-rose-50';
+          delBtn.onclick = (e) => {
+            e.stopPropagation();
+            const current = loadSnippets();
+            current.splice(index, 1);
+            saveSnippets(current);
+            showToast('已刪除標籤', 'info');
+          };
+          wrap.appendChild(delBtn);
+        }
+        container.appendChild(wrap);
+      });
+    }
+
+    function promptAddSnippet() {
+      const input = prompt("請輸入自訂快捷詞：\\n（例：主動擦黑板、早修遲到、實驗課專注）");
+      if (!input || !input.trim()) return;
+      const trimmed = input.trim();
+      const finalText = trimmed.endsWith('，') || trimmed.endsWith('。') ? trimmed : trimmed + '，';
+      const isPositive = confirm("這是「正向表揚/亮點」詞彙嗎？\\n（按「確定」將套用金色亮點樣式，按「取消」為一般詞彙）");
+
+      const current = loadSnippets();
+      current.push({ text: finalText, isCustom: true, isPositive: isPositive });
+      saveSnippets(current);
+      showToast('已新增「' + trimmed + '」', 'success');
+    }
+
+    function appendSnippet(text) {
+      const textarea = document.getElementById('details');
+      textarea.value += text;
+      checkSensitiveWords(textarea.value);
+      textarea.focus();
+    }
+
+    function checkSensitiveWords(val) {
+      const alertBox = document.getElementById('sensitive-alert');
+      const hasSensitive = SENSITIVE_KEYWORDS.some(kw => val.includes(kw));
+      if (hasSensitive) {
+        alertBox.classList.remove('hidden');
+      } else {
+        alertBox.classList.add('hidden');
+      }
+    }
+
+    // 4. 語音辨識與通知 (手機端相容降級版)
+    function toggleSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+      if (!SpeechRecognition) {
+        focusInputAndGuideKeyboard();
+        return;
+      }
+
+      if (isRecording) {
+        if (recognition) recognition.stop();
+        return;
+      }
+
+      try {
+        recognition = new SpeechRecognition();
+        recognition.lang = 'zh-TW';
+        recognition.continuous = false;
+        recognition.interimResults = false;
+
+        recognition.onstart = () => {
+          isRecording = true;
+          document.getElementById('mic-icon').textContent = '🔴';
+          document.getElementById('mic-text').textContent = '正在聆聽...';
+          showToast('正在聆聽中，請說話...', 'info');
+        };
+
+        recognition.onresult = (event) => {
+          if (event.results && event.results[0] && event.results[0][0]) {
+            const text = event.results[0][0].transcript;
+            const textarea = document.getElementById('details');
+            textarea.value += text + '，';
+            checkSensitiveWords(textarea.value);
+            showToast('語音已轉為文字！', 'success');
+          }
+        };
+
+        recognition.onerror = (event) => {
+          stopRecordingState();
+          if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+            showToast('請允許麥克風權限，或直接用手機鍵盤聽寫！', 'error');
+          } else {
+            focusInputAndGuideKeyboard();
+          }
+        };
+
+        recognition.onend = () => {
+          stopRecordingState();
+        };
+
+        recognition.start();
+      } catch (err) {
+        stopRecordingState();
+        focusInputAndGuideKeyboard();
+      }
+    }
+
+    function focusInputAndGuideKeyboard() {
+      const textarea = document.getElementById('details');
+      textarea.focus();
+      showToast('💡 點擊下方鍵盤自帶的「🎙️ 麥克風」聽寫最流暢！', 'info');
+    }
+
+    function stopRecordingState() {
+      isRecording = false;
+      document.getElementById('mic-icon').textContent = '🎙️';
+      document.getElementById('mic-text').textContent = '語音聽寫';
+    }
+
+    function showToast(message, type) {
+      type = type || 'info';
+      const toast = document.getElementById('toast');
+      const msg = document.getElementById('toast-msg');
+      const icon = document.getElementById('toast-icon');
+
+      msg.textContent = message;
+      if (type === 'success') {
+        toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2.5 text-sm font-bold bg-[#021d6b] text-white border border-[#021d6b] show';
+        icon.textContent = '✅';
+      } else if (type === 'error') {
+        toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2.5 text-sm font-bold bg-rose-600 text-white border border-rose-700 show';
+        icon.textContent = '⚠️';
+      } else {
+        toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2.5 text-sm font-bold bg-[#fe8a24] text-white border border-orange-400 show';
+        icon.textContent = '💡';
+      }
+
+      setTimeout(() => { toast.classList.remove('show'); }, 3000);
+    }
+
+    // 5. 送出至 Google Sheets (強制阻擋未綁定者)
+    async function submitRecord() {
+      const targetUrl = getActiveWebhookUrl();
+
+      // 關鍵防護：未綁定者絕對不發出請求，並彈窗引導綁定
+      if (!targetUrl) {
+        showToast('⚠️ 請先綁定您個人的 Google 試算表網址！', 'error');
+        openWebhookModal();
+        return;
+      }
+
+      if (!selectedClass) {
+        showToast('請先新增並選擇班級！', 'error');
+        return;
+      }
+
+      if (!selectedSeat) {
+        showToast('請先點選學生座號！', 'error');
+        return;
+      }
+
+      const details = document.getElementById('details').value.trim();
+      if (!details) {
+        showToast('請填寫事由與摘要！', 'error');
+        return;
+      }
+
+      const recorder = document.getElementById('recorderName').value.trim() || '任課老師';
+
+      const payload = {
+        className: selectedClass,
+        seatNumber: selectedSeat,
+        category: selectedCategory,
+        contactTarget: document.getElementById('contactTarget').value.trim() || '無',
+        details: details,
+        actionPlan: document.getElementById('actionPlan').value.trim(),
+        recorder: recorder
+      };
+
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<span>⏳ 正在同步寫入試算表...</span>';
+
+      try {
+        await fetch(targetUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        showToast('已成功記錄 ' + selectedClass + ' 班 ' + selectedSeat + ' 號！', 'success');
+
+        resetSeat();
+        document.getElementById('details').value = '';
+        document.getElementById('actionPlan').value = '';
+        document.getElementById('sensitive-alert').classList.add('hidden');
+      } catch (err) {
+        showToast('連線失敗！文字已為您保留，請確認試算表網址。', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span>🚀 同步送至試算表</span>';
+      }
+    }
+
+    // 啟動初始化
+    renderClasses();
+    renderSeats();
+    renderSnippets();
+    updateBindingButtonState();
+  </script>
+</body>
+</html>
